@@ -1,0 +1,159 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run unit tests
+        run: python -B -m unittest discover -s tests -t .
+
+      - name: Check Python syntax
+        run: |
+          python - <<'PY'
+          import pathlib
+          import py_compile
+
+          for path in pathlib.Path('.').rglob('*.py'):
+              py_compile.compile(str(path), doraise=True)
+
+          print('py_compile ok')
+          PY
+
+  windows-release-flow:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run unit tests
+        run: python -B -m unittest discover -s tests -t .
+
+      - name: Check Python syntax
+        run: |
+          python - <<'PY'
+          import pathlib
+          import py_compile
+
+          for path in pathlib.Path('.').rglob('*.py'):
+              py_compile.compile(str(path), doraise=True)
+
+          print('py_compile ok')
+          PY
+
+      - name: Build release package
+        shell: pwsh
+        run: .\tools\build_release.ps1
+
+      - name: Validate release assets
+        shell: pwsh
+        run: |
+          $releaseRoot = Join-Path $PWD "dist\Notes"
+          $required = @(
+            "README.md",
+            "LICENSE",
+            "ARCHITECTURE.md",
+            "KNOWN_LIMITATIONS.md",
+            "config.json",
+            "icon.png",
+            "iconsel.png",
+            "launch.sh",
+            "notes.gptk",
+            "notes_app.py",
+            "notes",
+            "tools\install_to_sd.ps1",
+            "tools\run_desktop.ps1"
+          )
+
+          foreach ($relativePath in $required) {
+            $path = Join-Path $releaseRoot $relativePath
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Missing release asset: $relativePath"
+            }
+          }
+
+      - name: Validate installer and desktop launcher from release package
+        shell: pwsh
+        run: |
+          $releaseTemp = Join-Path $env:RUNNER_TEMP "notes-release-check"
+          if (Test-Path -LiteralPath $releaseTemp) {
+            Remove-Item -LiteralPath $releaseTemp -Recurse -Force
+          }
+          Expand-Archive -LiteralPath (Join-Path $PWD "dist\Notes-release.zip") -DestinationPath $releaseTemp -Force
+          $packageRoot = Join-Path $releaseTemp "Notes"
+
+          $sdRoot = Join-Path $env:RUNNER_TEMP "surwish-sd"
+          if (Test-Path -LiteralPath $sdRoot) {
+            Remove-Item -LiteralPath $sdRoot -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $sdRoot -Force | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $sdRoot "App\PixelReader") -Force | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $sdRoot "App\PortMaster\PortMaster") -Force | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $sdRoot "Data") -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $sdRoot "App\PixelReader\gptokeyb") -Value "mock gptokeyb"
+          Set-Content -LiteralPath (Join-Path $sdRoot "App\PortMaster\PortMaster\gamecontrollerdb.txt") -Value "mock controller db"
+
+          $drive = (67..90 | ForEach-Object { "{0}:" -f [char]$_ } | Where-Object { -not (Test-Path "$_\") } | Select-Object -First 1)
+          if (-not $drive) {
+            throw "No free drive letter available for installer validation"
+          }
+
+          subst $drive $sdRoot
+          if (-not (Test-Path ($drive + "\"))) {
+            throw "subst failed for $drive"
+          }
+          try {
+            & (Join-Path $packageRoot "tools\install_to_sd.ps1") -Drive $drive
+
+            $installedRoot = $drive + "\App\Notes"
+            $installedFiles = @(
+              "config.json",
+              "icon.png",
+              "iconsel.png",
+              "launch.sh",
+              "notes.gptk",
+              "notes_app.py",
+              "notes",
+              "gptokeyb",
+              "gamecontrollerdb.txt"
+            )
+
+            foreach ($relativePath in $installedFiles) {
+              $path = Join-Path $installedRoot $relativePath
+              if (-not (Test-Path -LiteralPath $path)) {
+                throw "Missing installed file: $relativePath"
+              }
+            }
+
+            $dataPath = $drive + "\Data\Notes"
+            if (-not (Test-Path -LiteralPath $dataPath)) {
+              throw "Installer did not create Data\\Notes"
+            }
+
+            & (Join-Path $packageRoot "tools\run_desktop.ps1") -DryRun -NotesDir (Join-Path $env:RUNNER_TEMP "notes-preview")
+          }
+          finally {
+            subst $drive /d
+          }

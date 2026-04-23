@@ -1,0 +1,7 @@
+{
+  "label": "Notes",
+  "icon": "icon.png",
+  "iconsel": "icon.png",
+  "launch": "launch.sh",
+  "description": "Take notes on Miyoo Flip V2"
+}
