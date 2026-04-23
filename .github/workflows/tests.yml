@@ -24,8 +24,8 @@ jobs:
         run: python -B -m unittest discover -s tests -t .
 
       - name: Check Python syntax
+        shell: python
         run: |
-          python - <<'PY'
           import pathlib
           import py_compile
 
@@ -33,7 +33,6 @@ jobs:
               py_compile.compile(str(path), doraise=True)
 
           print('py_compile ok')
-          PY
 
   windows-release-flow:
     runs-on: windows-latest
@@ -51,8 +50,8 @@ jobs:
         run: python -B -m unittest discover -s tests -t .
 
       - name: Check Python syntax
+        shell: python
         run: |
-          python - <<'PY'
           import pathlib
           import py_compile
 
@@ -60,7 +59,6 @@ jobs:
               py_compile.compile(str(path), doraise=True)
 
           print('py_compile ok')
-          PY
 
       - name: Build release package
         shell: pwsh
